@@ -504,7 +504,7 @@ class ModelController extends GetxController {
 
     _manager.addCustomModel(model);
 
-    final sizeStr = sizeGb > 0 ? ' (${sizeGb} GB)' : '';
+    final sizeStr = sizeGb > 0 ? ' ($sizeGb GB)' : '';
     Get.snackbar('Model Added', '$name$sizeStr added to your library!',
         snackPosition: SnackPosition.BOTTOM);
   }
