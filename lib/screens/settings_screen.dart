@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
@@ -374,7 +375,15 @@ class _SettingsBody extends StatelessWidget {
                               ? null
                               : (enabled) async {
                                   try {
-                                    await apiServer.setAllInterfaces(enabled);
+                                    final ok = await apiServer
+                                        .setAllInterfaces(enabled);
+                                    if (!ok) {
+                                      Get.snackbar(
+                                        'Could Not Rebind',
+                                        apiServer.errorMessage.value,
+                                        snackPosition: SnackPosition.BOTTOM,
+                                      );
+                                    }
                                   } catch (e) {
                                     Get.snackbar(
                                       'Settings Error',
@@ -445,7 +454,8 @@ class _SettingsBody extends StatelessWidget {
                           decoration: InputDecoration(
                             labelText: 'Port',
                             helperText:
-                                'Use API key "local" in clients that require one.',
+                                'Ports 1024-65535. Changing this rebinds the '
+                                'server immediately.',
                             labelStyle: TextStyle(color: context.textM),
                             helperStyle: TextStyle(
                               color: context.textD,
@@ -481,10 +491,12 @@ class _SettingsBody extends StatelessWidget {
                               return;
                             }
                             try {
-                              await apiServer.setPort(parsed);
+                              final ok = await apiServer.setPort(parsed);
                               Get.snackbar(
-                                'Local API Updated',
-                                'Base URL is ${apiServer.baseUrl}',
+                                ok ? 'Local API Updated' : 'Port Change Failed',
+                                ok
+                                    ? 'Now serving on ${apiServer.baseUrl}'
+                                    : apiServer.errorMessage.value,
                                 snackPosition: SnackPosition.BOTTOM,
                               );
                             } catch (e) {
@@ -496,6 +508,8 @@ class _SettingsBody extends StatelessWidget {
                             }
                           },
                         ),
+                        const SizedBox(height: 16),
+                        _apiKeyBlock(context, apiServer),
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -757,6 +771,103 @@ class _SettingsBody extends StatelessWidget {
           fontWeight: FontWeight.w600,
         ),
       ),
+    );
+  }
+
+  /// API key controls: the token itself, a copy button, regeneration, and the
+  /// switch that turns auth off (locked while the server is exposed to the LAN).
+  Widget _apiKeyBlock(BuildContext context, LocalApiServerService apiServer) {
+    final authOn = apiServer.requireAuth.value;
+    final token = apiServer.apiToken.value;
+    final masked = token.length > 12
+        ? '${token.substring(0, 8)}${'\u2022' * 12}${token.substring(token.length - 4)}'
+        : token;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          title: Text(
+            'Require API Key',
+            style: TextStyle(color: context.text, fontSize: 14),
+          ),
+          subtitle: Text(
+            apiServer.authLocked
+                ? 'Always on while external connections are allowed'
+                : 'Clients must send Authorization: Bearer <key>',
+            style: TextStyle(color: context.textD, fontSize: 12),
+          ),
+          value: authOn,
+          onChanged: apiServer.authLocked
+              ? null
+              : (enabled) {
+                  if (!apiServer.setRequireAuth(enabled)) {
+                    Get.snackbar(
+                      'Cannot Disable',
+                      apiServer.errorMessage.value,
+                      snackPosition: SnackPosition.BOTTOM,
+                    );
+                  }
+                },
+          activeThumbColor: AppColors.accent,
+          contentPadding: EdgeInsets.zero,
+        ),
+        if (authOn) ...[
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: context.bgInput,
+              border: Border.all(color: context.border),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    masked,
+                    style: TextStyle(
+                      color: context.text,
+                      fontSize: 12.5,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copy key',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.copy_rounded, size: 17, color: context.textM),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: token));
+                    Get.snackbar(
+                      'Copied',
+                      'API key copied to clipboard.',
+                      snackPosition: SnackPosition.BOTTOM,
+                    );
+                  },
+                ),
+                IconButton(
+                  tooltip: 'Generate a new key',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    Icons.autorenew_rounded,
+                    size: 17,
+                    color: context.textM,
+                  ),
+                  onPressed: () {
+                    apiServer.regenerateToken();
+                    Get.snackbar(
+                      'New Key Generated',
+                      'Existing clients must be updated with the new key.',
+                      snackPosition: SnackPosition.BOTTOM,
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

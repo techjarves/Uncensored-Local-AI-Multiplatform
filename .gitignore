@@ -3,6 +3,7 @@
 .pub/
 .buildlog
 .flutter-plugins
+.flutter-plugins-dependencies
 .flutter-plugin-dependencies
 .packages
 

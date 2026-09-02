@@ -12,6 +12,8 @@ import 'wakelock_service.dart';
 class LocalApiServerService extends GetxService {
   static const defaultHost = '127.0.0.1';
   static const defaultPort = 4891;
+  static const minPort = 1024;
+  static const maxPort = 65535;
 
   final LlmService _llm = Get.find<LlmService>();
   final ChatStorageService _storage = Get.find<ChatStorageService>();
@@ -23,6 +25,8 @@ class LocalApiServerService extends GetxService {
   final errorMessage = ''.obs;
   final port = defaultPort.obs;
   final allInterfaces = false.obs;
+  final requireAuth = true.obs;
+  final apiToken = ''.obs;
 
   String get host => allInterfaces.value ? '0.0.0.0' : defaultHost;
   String get baseUrl {
@@ -31,23 +35,49 @@ class LocalApiServerService extends GetxService {
     }
     return 'http://$defaultHost:${port.value}/v1';
   }
+
   bool get isBusy => _llm.isGenerating.value;
   bool get hasLoadedModel => _llm.isLoaded.value;
   String get modelId => _llm.publicModelId;
 
+  /// Auth cannot be switched off while the server is reachable from the
+  /// network — that combination would hand the model to the whole LAN.
+  bool get authLocked => allInterfaces.value;
+
+  static bool isValidPort(int value) => value >= minPort && value <= maxPort;
+
   Future<LocalApiServerService> init() async {
     port.value = _normalizePort(_storage.localApiServerPort);
     allInterfaces.value = _storage.localApiAllInterfaces;
+    apiToken.value = _storage.localApiToken;
+    requireAuth.value = _storage.localApiRequireAuth || allInterfaces.value;
     if (_storage.localApiServerEnabled) {
       await start();
     }
     return this;
   }
 
-  Future<void> start({int? requestedPort}) async {
+  /// Bind (or rebind) the HTTP listener.
+  ///
+  /// The no-op guard compares against the *live socket* rather than the
+  /// observable fields — the observables are what callers are asking to
+  /// change, so testing them here would make every reconfiguration a no-op.
+  Future<void> start({int? requestedPort, bool? allInterfacesOverride}) async {
     final nextPort = _normalizePort(requestedPort ?? port.value);
-    if (isRunning.value && nextPort == port.value) return;
-    if (isRunning.value) {
+    final nextAllInterfaces = allInterfacesOverride ?? allInterfaces.value;
+    final bindAddress = nextAllInterfaces
+        ? InternetAddress.anyIPv4
+        : InternetAddress.loopbackIPv4;
+
+    final current = _server;
+    if (isRunning.value &&
+        current != null &&
+        current.port == nextPort &&
+        current.address.address == bindAddress.address) {
+      return;
+    }
+
+    if (isRunning.value || _server != null) {
       await stop(persist: false);
     }
 
@@ -55,17 +85,15 @@ class LocalApiServerService extends GetxService {
     errorMessage.value = '';
 
     try {
-      final bindAddress = allInterfaces.value
-          ? InternetAddress.anyIPv4
-          : InternetAddress.loopbackIPv4;
+      _server = await HttpServer.bind(bindAddress, nextPort, shared: false);
 
-      _server = await HttpServer.bind(
-        bindAddress,
-        nextPort,
-        shared: false,
-      );
       port.value = nextPort;
+      allInterfaces.value = nextAllInterfaces;
+      if (nextAllInterfaces) requireAuth.value = true;
+      _ensureToken();
+
       _storage.localApiServerPort = nextPort;
+      _storage.localApiAllInterfaces = nextAllInterfaces;
       _storage.localApiServerEnabled = true;
       isRunning.value = true;
 
@@ -88,7 +116,7 @@ class LocalApiServerService extends GetxService {
       _server = null;
       isRunning.value = false;
       errorMessage.value = e.toString();
-      // Do not rethrow here, so that app initialization can continue 
+      // Do not rethrow here, so that app initialization can continue
       // even if the local API server fails to bind.
     } finally {
       isStarting.value = false;
@@ -105,27 +133,83 @@ class LocalApiServerService extends GetxService {
     if (persist) {
       _storage.localApiServerEnabled = false;
     }
-    try {
-      final wakelockService = Get.find<WakelockService>();
-      await wakelockService.disable();
-    } catch (_) {}
-  }
-
-  Future<void> setPort(int nextPort) async {
-    final normalized = _normalizePort(nextPort);
-    port.value = normalized;
-    _storage.localApiServerPort = normalized;
-    if (isRunning.value) {
-      await start(requestedPort: normalized);
+    // Only drop the wakelock if nothing else still needs the CPU awake.
+    if (!hasLoadedModel && !isBusy) {
+      try {
+        final wakelockService = Get.find<WakelockService>();
+        await wakelockService.disable();
+      } catch (_) {}
     }
   }
 
-  Future<void> setAllInterfaces(bool value) async {
-    allInterfaces.value = value;
+  /// Change the listening port.
+  ///
+  /// Returns false (and populates [errorMessage]) if the port is out of range
+  /// or the rebind failed, so the UI can tell the user what went wrong instead
+  /// of silently substituting a different port.
+  Future<bool> setPort(int nextPort) async {
+    if (!isValidPort(nextPort)) {
+      errorMessage.value =
+          'Port must be between $minPort and $maxPort. Ports below $minPort '
+          'are reserved by the operating system.';
+      return false;
+    }
+
+    _storage.localApiServerPort = nextPort;
+
+    if (!isRunning.value) {
+      port.value = nextPort;
+      return true;
+    }
+
+    await start(requestedPort: nextPort);
+    return isRunning.value;
+  }
+
+  /// Expose the server beyond loopback. Forces auth on, because this is the
+  /// switch that makes the model reachable from other machines.
+  Future<bool> setAllInterfaces(bool value) async {
     _storage.localApiAllInterfaces = value;
-    if (isRunning.value) {
-      // Restart with new binding
-      await start();
+    if (value) {
+      requireAuth.value = true;
+      _storage.localApiRequireAuth = true;
+      _ensureToken();
+    }
+
+    if (!isRunning.value) {
+      allInterfaces.value = value;
+      return true;
+    }
+
+    await start(allInterfacesOverride: value);
+    return isRunning.value;
+  }
+
+  /// Toggle bearer-token auth. Refused while [authLocked].
+  bool setRequireAuth(bool value) {
+    if (!value && authLocked) {
+      errorMessage.value =
+          'Authentication cannot be disabled while the server is exposed on '
+          'all interfaces.';
+      return false;
+    }
+    requireAuth.value = value;
+    _storage.localApiRequireAuth = value;
+    if (value) _ensureToken();
+    return true;
+  }
+
+  /// Issue a fresh token, invalidating every existing client.
+  String regenerateToken() {
+    final token = ChatStorageService.newApiToken();
+    _storage.localApiToken = token;
+    apiToken.value = token;
+    return token;
+  }
+
+  void _ensureToken() {
+    if (apiToken.value.isEmpty) {
+      apiToken.value = _storage.localApiToken;
     }
   }
 
@@ -148,8 +232,44 @@ class LocalApiServerService extends GetxService {
   }
 
   int _normalizePort(int value) {
-    if (value < 1024 || value > 65535) return defaultPort;
+    if (!isValidPort(value)) return defaultPort;
     return value;
+  }
+
+  /// Compare in constant time so a caller cannot recover the token by
+  /// timing repeated guesses.
+  static bool _secureEquals(String a, String b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    }
+    return diff == 0;
+  }
+
+  /// Extract a bearer token from the request, tolerating the `api_key` query
+  /// parameter that some OpenAI clients use instead of a header.
+  String? _presentedToken(HttpRequest request) {
+    final header = request.headers.value(HttpHeaders.authorizationHeader);
+    if (header != null) {
+      final trimmed = header.trim();
+      if (trimmed.toLowerCase().startsWith('bearer ')) {
+        return trimmed.substring(7).trim();
+      }
+      if (trimmed.isNotEmpty) return trimmed;
+    }
+    final queryKey = request.uri.queryParameters['api_key'];
+    if (queryKey != null && queryKey.isNotEmpty) return queryKey;
+    return null;
+  }
+
+  bool _isAuthorized(HttpRequest request) {
+    if (!requireAuth.value) return true;
+    final expected = apiToken.value;
+    if (expected.isEmpty) return true;
+    final presented = _presentedToken(request);
+    if (presented == null) return false;
+    return _secureEquals(presented, expected);
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
@@ -161,10 +281,29 @@ class LocalApiServerService extends GetxService {
       return;
     }
 
+    // Tracks whether a response body has already begun, so the error handlers
+    // below never try to rewrite headers on a stream that is already open.
+    var responseStarted = false;
+
     try {
       final path = request.uri.path;
+
+      // /healthz stays unauthenticated so supervisors and the Settings screen
+      // can probe liveness. It deliberately exposes no token material.
       if (request.method == 'GET' && path == '/healthz') {
         await _writeJson(request.response, _healthJson());
+        return;
+      }
+
+      if (!_isAuthorized(request)) {
+        await _writeError(
+          request.response,
+          HttpStatus.unauthorized,
+          'Missing or invalid API key. Pass the token shown in Settings as '
+          '`Authorization: Bearer <token>`.',
+          type: 'invalid_request_error',
+          code: 'invalid_api_key',
+        );
         return;
       }
 
@@ -174,7 +313,44 @@ class LocalApiServerService extends GetxService {
       }
 
       if (request.method == 'POST' && path == '/v1/chat/completions') {
-        await _handleChatCompletions(request);
+        // Parse and validate BEFORE checking model readiness, so a malformed
+        // request always reports what is actually wrong with it rather than
+        // being masked by a 503.
+        final body = await _readJsonObject(request);
+        final chatRequest = _parseChatCompletionRequest(body);
+
+        if (!hasLoadedModel) {
+          await _writeError(
+            request.response,
+            HttpStatus.serviceUnavailable,
+            'No model loaded. Load a model in Uncensored Local AI first.',
+            type: 'invalid_request_error',
+            code: 'model_not_loaded',
+          );
+          return;
+        }
+
+        if (isBusy) {
+          await _writeError(
+            request.response,
+            HttpStatus.tooManyRequests,
+            'Another generation is already in progress. Retry shortly.',
+            type: 'server_error',
+            code: 'busy',
+          );
+          return;
+        }
+
+        if (chatRequest.stream) {
+          responseStarted = true;
+          await _streamChatCompletion(request.response, chatRequest);
+          return;
+        }
+
+        await _writeJson(
+          request.response,
+          await _createChatCompletion(chatRequest),
+        );
         return;
       }
 
@@ -186,6 +362,7 @@ class LocalApiServerService extends GetxService {
         code: 'not_found',
       );
     } on _OpenAiRequestException catch (e) {
+      if (responseStarted) return;
       await _writeError(
         request.response,
         HttpStatus.badRequest,
@@ -194,6 +371,7 @@ class LocalApiServerService extends GetxService {
         param: e.param,
       );
     } catch (e) {
+      if (responseStarted) return;
       await _writeError(
         request.response,
         HttpStatus.internalServerError,
@@ -212,6 +390,7 @@ class LocalApiServerService extends GetxService {
       'host': host,
       'port': port.value,
       'base_url': baseUrl,
+      'auth_required': requireAuth.value,
     };
   }
 
@@ -228,43 +407,6 @@ class LocalApiServerService extends GetxService {
         : <Map<String, dynamic>>[];
 
     return {'object': 'list', 'data': data};
-  }
-
-  Future<void> _handleChatCompletions(HttpRequest request) async {
-    if (!hasLoadedModel) {
-      await _writeError(
-        request.response,
-        HttpStatus.serviceUnavailable,
-        'No model loaded. Load a model in Uncensored Local AI first.',
-        type: 'invalid_request_error',
-        code: 'model_not_loaded',
-      );
-      return;
-    }
-
-    if (isBusy) {
-      await _writeError(
-        request.response,
-        HttpStatus.tooManyRequests,
-        'Another generation is already in progress. Retry shortly.',
-        type: 'server_error',
-        code: 'busy',
-      );
-      return;
-    }
-
-    final body = await _readJsonObject(request);
-    final chatRequest = _parseChatCompletionRequest(body);
-
-    if (chatRequest.stream) {
-      await _streamChatCompletion(request.response, chatRequest);
-      return;
-    }
-
-    await _writeJson(
-      request.response,
-      await _createChatCompletion(chatRequest),
-    );
   }
 
   Future<Map<String, dynamic>> _createChatCompletion(
@@ -308,31 +450,36 @@ class LocalApiServerService extends GetxService {
     final id = _completionId();
 
     response.statusCode = HttpStatus.ok;
+    // Without this the response is buffered and tokens arrive in bursts
+    // instead of streaming, which defeats the point of `stream: true`.
+    response.bufferOutput = false;
     response.headers
       ..contentType = ContentType('text', 'event-stream', charset: 'utf-8')
       ..set(HttpHeaders.cacheControlHeader, 'no-cache')
-      ..set(HttpHeaders.connectionHeader, 'keep-alive');
+      ..set(HttpHeaders.connectionHeader, 'keep-alive')
+      ..set('X-Accel-Buffering', 'no');
 
-    void writeEvent(Map<String, dynamic> payload) {
+    Future<void> writeEvent(Map<String, dynamic> payload) async {
       response.write('data: ${jsonEncode(payload)}\n\n');
+      await response.flush();
     }
 
-    writeEvent(
-      _streamChunk(id: id, created: created, delta: {'role': 'assistant'}),
-    );
-
     try {
+      await writeEvent(
+        _streamChunk(id: id, created: created, delta: {'role': 'assistant'}),
+      );
+
       await for (final token in _llm.generateChatCompletion(
         messages: request.messages,
         params: request.params,
       )) {
         if (token.isEmpty) continue;
-        writeEvent(
+        await writeEvent(
           _streamChunk(id: id, created: created, delta: {'content': token}),
         );
       }
 
-      writeEvent(
+      await writeEvent(
         _streamChunk(
           id: id,
           created: created,
@@ -341,18 +488,26 @@ class LocalApiServerService extends GetxService {
         ),
       );
       response.write('data: [DONE]\n\n');
+      await response.flush();
     } catch (e) {
-      writeEvent({
-        'error': {
-          'message': 'Model generation failed: $e',
-          'type': 'server_error',
-          'param': null,
-          'code': 'generation_failed',
-        },
-      });
-      response.write('data: [DONE]\n\n');
+      // The client may have hung up mid-stream; a failed write here must not
+      // escape and take down the request handler.
+      try {
+        await writeEvent({
+          'error': {
+            'message': 'Model generation failed: $e',
+            'type': 'server_error',
+            'param': null,
+            'code': 'generation_failed',
+          },
+        });
+        response.write('data: [DONE]\n\n');
+        await response.flush();
+      } catch (_) {}
     } finally {
-      await response.close();
+      try {
+        await response.close();
+      } catch (_) {}
     }
   }
 

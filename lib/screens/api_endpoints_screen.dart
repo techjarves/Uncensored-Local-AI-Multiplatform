@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_colors.dart';
@@ -18,6 +19,14 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
   bool _testing = false;
   String _testResult = '';
 
+  /// Bearer header for in-app test calls, omitted when auth is switched off.
+  Map<String, String> _authHeaders() {
+    if (!apiServer.requireAuth.value || apiServer.apiToken.value.isEmpty) {
+      return const {};
+    }
+    return {'Authorization': 'Bearer ${apiServer.apiToken.value}'};
+  }
+
   Future<void> _testEndpoint(String path) async {
     if (!apiServer.isRunning.value) {
       Get.snackbar('Error', 'API server is not running', snackPosition: SnackPosition.BOTTOM);
@@ -32,7 +41,9 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
     try {
       // Always use localhost for internal testing, even if bound to 0.0.0.0
       final url = 'http://127.0.0.1:${apiServer.port.value}$path';
-      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+      final response = await http
+          .get(Uri.parse(url), headers: _authHeaders())
+          .timeout(const Duration(seconds: 5));
       
       if (response.statusCode == 200) {
         final jsonStr = const JsonEncoder.withIndent('  ').convert(jsonDecode(response.body));
@@ -122,6 +133,67 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
               'The app runs a local HTTP server compatible with the OpenAI API format. You can point any app, script, or tool (like LangChain or AutoGPT) to this Base URL.',
               style: TextStyle(color: context.textM, fontSize: 13, height: 1.5),
             ),
+            if (apiServer.requireAuth.value) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.08),
+                  border: Border.all(
+                    color: AppColors.accent.withValues(alpha: 0.3),
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.key_rounded,
+                            size: 16, color: AppColors.accent),
+                        const SizedBox(width: 8),
+                        Text(
+                          'API key required',
+                          style: TextStyle(
+                            color: context.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          tooltip: 'Copy key',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: Icon(Icons.copy_rounded,
+                              size: 16, color: context.textM),
+                          onPressed: () {
+                            Clipboard.setData(
+                              ClipboardData(text: apiServer.apiToken.value),
+                            );
+                            Get.snackbar(
+                              'Copied',
+                              'API key copied to clipboard.',
+                              snackPosition: SnackPosition.BOTTOM,
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    SelectableText(
+                      'Authorization: Bearer ${apiServer.apiToken.value}',
+                      style: TextStyle(
+                        color: context.textM,
+                        fontSize: 11.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
 
             // Endpoints
