@@ -4,5 +4,26 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+
+	<!-- Downloading GGUF models from Hugging Face and custom URLs. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+
+	<!-- The built-in OpenAI-compatible API server binds a local port. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+
+	<!-- Importing a .gguf the user picks from disk. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+
+	<!-- llama.cpp compiles and executes kernels at runtime. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+
+	<!-- llamadart loads its backend dylibs (Metal, CPU) dynamically via
+	     ggml_backend_load_all(), which the hardened runtime otherwise blocks. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
 </dict>
 </plist>
