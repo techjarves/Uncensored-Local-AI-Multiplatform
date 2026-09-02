@@ -23,6 +23,9 @@ dependencies:
   # ── Networking / Downloads ──────────────────────────────────────
   http: ^1.2.2                     # HTTP requests + model downloading
 
+  # ── Integrity ───────────────────────────────────────────────────
+  crypto: ^3.0.6                   # SHA-256 verification of downloaded models
+
   # ── File System ─────────────────────────────────────────────────
   path_provider: ^2.1.5            # App documents / downloads dir
   path: ^1.9.1                     # Path string utilities

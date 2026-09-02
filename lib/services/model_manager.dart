@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:hive/hive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -21,11 +22,15 @@ class ModelManager extends GetxService {
   final activeDownloads = <String, DownloadState>{}.obs;
   final tick = 0.obs; // force UI refresh counter
 
-  http.Client? _httpClient;
   late String _modelsDir;
 
-  Future<ModelManager> init() async {
-    _modelsDir = await _getModelsDir();
+  /// [modelsDirOverride] lets tests point the manager at a temp directory
+  /// instead of the platform documents directory.
+  Future<ModelManager> init({String? modelsDirOverride}) async {
+    _modelsDir = modelsDirOverride ?? await _getModelsDir();
+    if (modelsDirOverride != null) {
+      await Directory(modelsDirOverride).create(recursive: true);
+    }
     await _loadCatalog();
     await scanDownloaded();
     return this;
@@ -115,7 +120,10 @@ class ModelManager extends GetxService {
   }
 
   /// Download a model with real-time speed tracking.
-  /// Enables wake lock + foreground service to keep download alive.
+  ///
+  /// Enables wake lock + foreground service to keep the download alive.
+  /// Verifies the HTTP response before writing anything, and the file's
+  /// checksum before publishing it under its final name.
   Future<void> downloadModel(AiModelInfo model) async {
     if (isDownloading(model.filename)) return;
 
@@ -129,82 +137,120 @@ class ModelManager extends GetxService {
     }
 
     // Initialize download state instantly
-    activeDownloads[model.filename] = DownloadState(
+    final state = DownloadState(
       filename: model.filename,
       totalBytes: model.sizeGb * 1024 * 1024 * 1024,
     );
+    activeDownloads[model.filename] = state;
     _notifyUI();
 
     final filePath = getModelPath(model);
     final partFile = File('$filePath.part');
 
+    // Each download owns its client. A single shared field meant cancelling
+    // or finishing one transfer tore down every other transfer's connection.
+    final client = http.Client();
+    state.client = client;
+
     try {
-      _httpClient = http.Client();
       final request = http.Request('GET', Uri.parse(model.url));
 
       // Support resume
       int existingBytes = 0;
       if (await partFile.exists()) {
         existingBytes = await partFile.length();
-        request.headers['Range'] = 'bytes=$existingBytes-';
+        if (existingBytes > 0) {
+          request.headers['Range'] = 'bytes=$existingBytes-';
+        }
       }
 
-      final response = await _httpClient!.send(request);
+      final response = await client.send(request);
+
+      _assertDownloadable(response, model);
+
+      // A server may ignore Range and reply 200 with the whole body. Appending
+      // that to an existing partial produces a corrupt file that is larger than
+      // the real model, so fall back to a clean restart instead.
+      var resuming = existingBytes > 0;
+      if (resuming && response.statusCode != HttpStatus.partialContent) {
+        resuming = false;
+        existingBytes = 0;
+      }
+
       final contentLength = response.contentLength ?? 0;
       final totalBytes = (existingBytes + contentLength).toDouble();
 
-      // Update total from actual HTTP response
-      final state = activeDownloads[model.filename]!;
       state.totalBytes = totalBytes > 0 ? totalBytes : state.totalBytes;
       state.receivedBytes = existingBytes.toDouble();
 
       final sink = partFile.openWrite(
-          mode: existingBytes > 0 ? FileMode.append : FileMode.write);
+          mode: resuming ? FileMode.append : FileMode.write);
 
       int receivedBytes = existingBytes;
       final stopwatch = Stopwatch()..start();
       int lastSpeedCheck = 0;
       int lastSpeedBytes = existingBytes;
 
-      await for (final chunk in response.stream) {
-        // Check if cancelled
-        if (state.isCancelled) break;
+      try {
+        await for (final chunk in response.stream) {
+          // Check if cancelled
+          if (state.isCancelled) break;
 
-        sink.add(chunk);
-        receivedBytes += chunk.length;
-        state.receivedBytes = receivedBytes.toDouble();
+          sink.add(chunk);
+          receivedBytes += chunk.length;
+          state.receivedBytes = receivedBytes.toDouble();
 
-        // Calculate speed every 500ms
-        if (stopwatch.elapsedMilliseconds - lastSpeedCheck > 500) {
-          final elapsed = (stopwatch.elapsedMilliseconds - lastSpeedCheck) / 1000;
-          final bytesDelta = receivedBytes - lastSpeedBytes;
-          state.speedBytesPerSec = bytesDelta / elapsed;
-          lastSpeedCheck = stopwatch.elapsedMilliseconds;
-          lastSpeedBytes = receivedBytes;
-          _notifyUI(); // trigger rebuild
+          // Calculate speed every 500ms
+          if (stopwatch.elapsedMilliseconds - lastSpeedCheck > 500) {
+            final elapsed = (stopwatch.elapsedMilliseconds - lastSpeedCheck) / 1000;
+            final bytesDelta = receivedBytes - lastSpeedBytes;
+            state.speedBytesPerSec = bytesDelta / elapsed;
+            lastSpeedCheck = stopwatch.elapsedMilliseconds;
+            lastSpeedBytes = receivedBytes;
+            _notifyUI(); // trigger rebuild
 
-          // Update foreground notification with progress
-          if (wakelockService != null && state.totalBytes > 0) {
-            final progress = state.receivedBytes / state.totalBytes;
-            final speedMb = (state.speedBytesPerSec / (1024 * 1024)).toStringAsFixed(1);
-            wakelockService.updateDownloadProgress(
-              modelName: model.name,
-              progress: progress,
-              speedText: '$speedMb MB/s',
-            );
+            // Update foreground notification with progress
+            if (wakelockService != null && state.totalBytes > 0) {
+              final progress = state.receivedBytes / state.totalBytes;
+              final speedMb = (state.speedBytesPerSec / (1024 * 1024)).toStringAsFixed(1);
+              wakelockService.updateDownloadProgress(
+                modelName: model.name,
+                progress: progress,
+                speedText: '$speedMb MB/s',
+              );
+            }
           }
+        }
+      } finally {
+        await sink.flush();
+        await sink.close();
+      }
+
+      if (state.isCancelled) {
+        state.isActive = false;
+        activeDownloads.remove(model.filename);
+        _notifyUI();
+        return;
+      }
+
+      if (model.hasChecksum) {
+        state.isVerifying = true;
+        _notifyUI();
+        final actual = await _sha256OfFile(partFile);
+        state.isVerifying = false;
+        if (actual != model.sha256) {
+          await partFile.delete();
+          throw Exception(
+            'Downloaded file failed its integrity check and was discarded. '
+            'Expected SHA-256 ${model.sha256}, got $actual.',
+          );
         }
       }
 
-      await sink.flush();
-      await sink.close();
-
-      if (!state.isCancelled) {
-        // Rename .part to final
-        await partFile.rename(filePath);
-        if (!downloadedModels.contains(model.filename)) {
-          downloadedModels.add(model.filename);
-        }
+      // Rename .part to final
+      await partFile.rename(filePath);
+      if (!downloadedModels.contains(model.filename)) {
+        downloadedModels.add(model.filename);
       }
 
       state.isActive = false;
@@ -216,8 +262,8 @@ class ModelManager extends GetxService {
       _notifyUI();
       rethrow;
     } finally {
-      _httpClient?.close();
-      _httpClient = null;
+      client.close();
+      state.client = null;
 
       // Disable wake lock if no other downloads are active
       if (activeDownloads.isEmpty) {
@@ -228,14 +274,61 @@ class ModelManager extends GetxService {
     }
   }
 
+  /// Reject a response that is not actually a model body.
+  ///
+  /// Without this, a 404 page, a login redirect or an HTML interstitial was
+  /// streamed to disk and renamed to .gguf, failing opaquely at load time.
+  void _assertDownloadable(http.StreamedResponse response, AiModelInfo model) {
+    final status = response.statusCode;
+    if (status == HttpStatus.ok || status == HttpStatus.partialContent) {
+      final contentType =
+          response.headers['content-type']?.toLowerCase() ?? '';
+      if (contentType.startsWith('text/html')) {
+        throw Exception(
+          'The download URL returned a web page instead of a model file. '
+          'The link for ${model.name} may have moved or now require sign-in.',
+        );
+      }
+      return;
+    }
+
+    if (status == HttpStatus.unauthorized || status == HttpStatus.forbidden) {
+      throw Exception(
+        'Access to ${model.name} was denied (HTTP $status). This model may '
+        'require accepting a licence on the host before downloading.',
+      );
+    }
+    if (status == HttpStatus.notFound) {
+      throw Exception(
+        'The download URL for ${model.name} no longer exists (HTTP 404).',
+      );
+    }
+    if (status == HttpStatus.requestedRangeNotSatisfiable) {
+      throw Exception(
+        'Could not resume the download of ${model.name}. Delete the partial '
+        'file and start again.',
+      );
+    }
+    throw Exception('Download failed for ${model.name} (HTTP $status).');
+  }
+
+  /// Stream the file through SHA-256 so a multi-GB model is never held in RAM.
+  Future<String> _sha256OfFile(File file) async {
+    final digest = await file.openRead().transform(sha256).first;
+    return digest.toString();
+  }
+
   /// Cancel an active download.
   void cancelDownload(String filename) {
-    if (activeDownloads.containsKey(filename)) {
-      activeDownloads[filename]!.isCancelled = true;
-      activeDownloads[filename]!.isActive = false;
+    final state = activeDownloads[filename];
+    if (state != null) {
+      state.isCancelled = true;
+      state.isActive = false;
+      // Close only this transfer's client — closing a shared one used to kill
+      // every other download in flight.
+      state.client?.close();
+      state.client = null;
     }
-    _httpClient?.close();
-    _httpClient = null;
     activeDownloads.remove(filename);
     _notifyUI();
   }
@@ -397,7 +490,11 @@ class ModelManager extends GetxService {
 
   @override
   void onClose() {
-    _httpClient?.close();
+    for (final state in activeDownloads.values) {
+      state.isCancelled = true;
+      state.client?.close();
+      state.client = null;
+    }
     super.onClose();
   }
 }
