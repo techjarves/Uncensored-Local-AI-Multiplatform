@@ -167,42 +167,7 @@ class _SettingsBody extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: context.textD),
               ),
               const SizedBox(height: 12),
-              Obx(
-                () => TextField(
-                  controller:
-                      TextEditingController(text: chatCtrl.systemPrompt.value)
-                        ..selection = TextSelection.fromPosition(
-                          TextPosition(
-                            offset: chatCtrl.systemPrompt.value.length,
-                          ),
-                        ),
-                  maxLines: 4,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: context.text,
-                    height: 1.5,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'e.g. You are a helpful assistant...',
-                    hintStyle: TextStyle(color: context.textD),
-                    filled: true,
-                    fillColor: context.bgInput,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: context.border),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: context.border),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.accent),
-                    ),
-                  ),
-                  onChanged: (v) => chatCtrl.setGlobalSystemPrompt(v),
-                ),
-              ),
+              _SystemPromptField(chatCtrl: chatCtrl),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,
@@ -1159,3 +1124,74 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   }
 }
 
+/// Global system prompt editor.
+///
+/// Owns its TextEditingController. Building one inside an Obx recreated it on
+/// every keystroke — because onChanged wrote back to the same observable the
+/// Obx watched — which reset the selection and sent the caret to the end of
+/// the text after every character typed.
+class _SystemPromptField extends StatefulWidget {
+  final ChatController chatCtrl;
+
+  const _SystemPromptField({required this.chatCtrl});
+
+  @override
+  State<_SystemPromptField> createState() => _SystemPromptFieldState();
+}
+
+class _SystemPromptFieldState extends State<_SystemPromptField> {
+  late final TextEditingController _controller;
+  late final Worker _worker;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: widget.chatCtrl.systemPrompt.value,
+    );
+    // Reflect changes made elsewhere (the Clear button, switching chats)
+    // without disturbing the caret while the user is typing here.
+    _worker = ever(widget.chatCtrl.systemPrompt, (String value) {
+      if (!mounted || value == _controller.text) return;
+      _controller.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _worker.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      maxLines: 4,
+      style: TextStyle(fontSize: 14, color: context.text, height: 1.5),
+      decoration: InputDecoration(
+        hintText: 'e.g. You are a helpful assistant...',
+        hintStyle: TextStyle(color: context.textD),
+        filled: true,
+        fillColor: context.bgInput,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: context.border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: context.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.accent),
+        ),
+      ),
+      onChanged: widget.chatCtrl.setGlobalSystemPrompt,
+    );
+  }
+}

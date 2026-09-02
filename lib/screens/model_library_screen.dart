@@ -547,6 +547,7 @@ class _ImportButton extends StatelessWidget {
     final nameCtrl = TextEditingController();
     final urlCtrl = TextEditingController();
 
+    // Dispose once the dialog is gone, however it was dismissed.
     Get.dialog(
       AlertDialog(
         backgroundColor: context.bgPanel,
@@ -652,6 +653,9 @@ class _ImportButton extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ).whenComplete(() {
+      nameCtrl.dispose();
+      urlCtrl.dispose();
+    });
   }
 }

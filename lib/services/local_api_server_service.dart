@@ -99,7 +99,7 @@ class LocalApiServerService extends GetxService {
 
       try {
         final wakelockService = Get.find<WakelockService>();
-        await wakelockService.enableForInference();
+        await wakelockService.enableForApiServer();
       } catch (_) {}
 
       unawaited(
@@ -133,13 +133,10 @@ class LocalApiServerService extends GetxService {
     if (persist) {
       _storage.localApiServerEnabled = false;
     }
-    // Only drop the wakelock if nothing else still needs the CPU awake.
-    if (!hasLoadedModel && !isBusy) {
-      try {
-        final wakelockService = Get.find<WakelockService>();
-        await wakelockService.disable();
-      } catch (_) {}
-    }
+    try {
+      final wakelockService = Get.find<WakelockService>();
+      await wakelockService.releaseApiServer();
+    } catch (_) {}
   }
 
   /// Change the listening port.

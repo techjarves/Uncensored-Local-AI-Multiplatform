@@ -422,7 +422,7 @@ class LlmService extends GetxService {
     // Disable wake lock when model is unloaded
     try {
       final wakelockService = Get.find<WakelockService>();
-      await wakelockService.disable();
+      await wakelockService.releaseModel();
     } catch (_) {}
   }
 

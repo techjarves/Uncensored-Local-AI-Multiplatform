@@ -265,10 +265,11 @@ class ModelManager extends GetxService {
       client.close();
       state.client = null;
 
-      // Disable wake lock if no other downloads are active
+      // Release only this subsystem's claim — a loaded model or the API
+      // server may still need the device awake.
       if (activeDownloads.isEmpty) {
         try {
-          await wakelockService?.disable();
+          await wakelockService?.releaseDownload();
         } catch (_) {}
       }
     }

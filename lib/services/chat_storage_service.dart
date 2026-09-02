@@ -24,13 +24,7 @@ class ChatStorageService extends GetxService {
     return chats;
   }
 
-  ChatModel? getChat(String id) {
-    try {
-      return _chatsBox.values.firstWhere((c) => c.id == id);
-    } catch (_) {
-      return null;
-    }
-  }
+  ChatModel? getChat(String id) => _chatsBox.get(id);
 
   Future<void> saveChat(ChatModel chat) async {
     chat.updatedAt = DateTime.now();
