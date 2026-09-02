@@ -49,6 +49,7 @@ void main() {
   test('init starts the localhost server by default', () async {
     final port = await _freePort();
     Get.find<ChatStorageService>().localApiServerPort = port;
+    Get.find<ChatStorageService>().localApiServerEnabled = true;
 
     await apiServer.init();
 

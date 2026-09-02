@@ -86,8 +86,8 @@ class ChatBubble extends StatelessWidget {
                 fontSize: 13,
                 color: const Color(0xFFE6EDF3),
                 backgroundColor: context.isDark
-                    ? Colors.white.withOpacity(0.08)
-                    : Colors.black.withOpacity(0.06),
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.06),
               ),
               codeblockDecoration: BoxDecoration(
                 color: const Color(0xFF1E1E2E),
@@ -95,7 +95,7 @@ class ChatBubble extends StatelessWidget {
               ),
               codeblockPadding: const EdgeInsets.all(14),
               blockquoteDecoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.08),
+                color: AppColors.accent.withValues(alpha: 0.08),
                 border: const Border(
                   left: BorderSide(color: AppColors.accent, width: 3),
                 ),

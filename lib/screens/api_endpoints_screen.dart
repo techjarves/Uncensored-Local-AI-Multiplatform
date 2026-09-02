@@ -76,9 +76,9 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: running ? AppColors.green.withOpacity(0.1) : AppColors.red.withOpacity(0.1),
+                color: running ? AppColors.green.withValues(alpha: 0.1) : AppColors.red.withValues(alpha: 0.1),
                 border: Border.all(
-                  color: running ? AppColors.green.withOpacity(0.3) : AppColors.red.withOpacity(0.3),
+                  color: running ? AppColors.green.withValues(alpha: 0.3) : AppColors.red.withValues(alpha: 0.3),
                 ),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -201,7 +201,7 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: methodColor.withOpacity(0.15),
+                    color: methodColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(

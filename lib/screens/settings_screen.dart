@@ -391,8 +391,8 @@ class _SettingsBody extends StatelessWidget {
                             margin: const EdgeInsets.only(top: 4, bottom: 8),
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: AppColors.orange.withOpacity(0.1),
-                              border: Border.all(color: AppColors.orange.withOpacity(0.3)),
+                              color: AppColors.orange.withValues(alpha: 0.1),
+                              border: Border.all(color: AppColors.orange.withValues(alpha: 0.3)),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Row(
@@ -729,11 +729,15 @@ class _SettingsBody extends StatelessWidget {
   Widget _card(BuildContext context, {required Widget child}) {
     return Container(
       decoration: BoxDecoration(
-        color: context.bgPanel,
         border: Border.all(color: context.border),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: child,
+      child: Material(
+        color: context.bgPanel,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
     );
   }
 
