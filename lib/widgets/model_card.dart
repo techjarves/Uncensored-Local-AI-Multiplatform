@@ -46,15 +46,15 @@ class ModelCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: isLoaded ? AppColors.accent.withOpacity(0.05) : context.bgPanel,
+        color: isLoaded ? AppColors.accent.withValues(alpha: 0.05) : context.bgPanel,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isLoaded
-              ? AppColors.accent.withOpacity(0.5)
+              ? AppColors.accent.withValues(alpha: 0.5)
               : isLoadingModel
-                  ? AppColors.orange.withOpacity(0.5)
+                  ? AppColors.orange.withValues(alpha: 0.5)
                   : isCurrentlyDownloading
-                      ? AppColors.orange.withOpacity(0.4)
+                      ? AppColors.orange.withValues(alpha: 0.4)
                       : context.border,
         ),
       ),
@@ -177,7 +177,7 @@ class ModelCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: AppColors.orange.withOpacity(0.15),
+                color: AppColors.orange.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
@@ -249,7 +249,7 @@ class ModelCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.1),
+                color: AppColors.accent.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -373,7 +373,7 @@ class ModelCard extends StatelessWidget {
             Tooltip(
               message: 'Unload model from memory',
               child: Material(
-                color: AppColors.orange.withOpacity(0.12),
+                color: AppColors.orange.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
                 child: InkWell(
                   onTap: onUnload,
@@ -399,8 +399,8 @@ class ModelCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: isUncensored
-            ? AppColors.uncensored.withOpacity(0.15)
-            : AppColors.standard.withOpacity(0.15),
+            ? AppColors.uncensored.withValues(alpha: 0.15)
+            : AppColors.standard.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
@@ -419,7 +419,7 @@ class ModelCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: AppColors.accent.withOpacity(0.15),
+        color: AppColors.accent.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
@@ -437,7 +437,7 @@ class ModelCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(

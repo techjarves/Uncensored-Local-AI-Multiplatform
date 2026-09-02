@@ -1,8 +1,8 @@
-```
 # Dependencies
 .pub/
 .buildlog
 .flutter-plugins
+.flutter-plugins-dependencies
 .flutter-plugin-dependencies
 .packages
 
@@ -21,4 +21,7 @@ build/
 # OS generated files
 .DS_Store
 Thumbs.db
-```
+
+# Desktop packaging output (packaging/*)
+/dist/
+/build/appimage/

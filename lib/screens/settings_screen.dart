@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
@@ -166,42 +167,7 @@ class _SettingsBody extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: context.textD),
               ),
               const SizedBox(height: 12),
-              Obx(
-                () => TextField(
-                  controller:
-                      TextEditingController(text: chatCtrl.systemPrompt.value)
-                        ..selection = TextSelection.fromPosition(
-                          TextPosition(
-                            offset: chatCtrl.systemPrompt.value.length,
-                          ),
-                        ),
-                  maxLines: 4,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: context.text,
-                    height: 1.5,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'e.g. You are a helpful assistant...',
-                    hintStyle: TextStyle(color: context.textD),
-                    filled: true,
-                    fillColor: context.bgInput,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: context.border),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: context.border),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.accent),
-                    ),
-                  ),
-                  onChanged: (v) => chatCtrl.setGlobalSystemPrompt(v),
-                ),
-              ),
+              _SystemPromptField(chatCtrl: chatCtrl),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,
@@ -374,7 +340,15 @@ class _SettingsBody extends StatelessWidget {
                               ? null
                               : (enabled) async {
                                   try {
-                                    await apiServer.setAllInterfaces(enabled);
+                                    final ok = await apiServer
+                                        .setAllInterfaces(enabled);
+                                    if (!ok) {
+                                      Get.snackbar(
+                                        'Could Not Rebind',
+                                        apiServer.errorMessage.value,
+                                        snackPosition: SnackPosition.BOTTOM,
+                                      );
+                                    }
                                   } catch (e) {
                                     Get.snackbar(
                                       'Settings Error',
@@ -391,8 +365,8 @@ class _SettingsBody extends StatelessWidget {
                             margin: const EdgeInsets.only(top: 4, bottom: 8),
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: AppColors.orange.withOpacity(0.1),
-                              border: Border.all(color: AppColors.orange.withOpacity(0.3)),
+                              color: AppColors.orange.withValues(alpha: 0.1),
+                              border: Border.all(color: AppColors.orange.withValues(alpha: 0.3)),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Row(
@@ -445,7 +419,8 @@ class _SettingsBody extends StatelessWidget {
                           decoration: InputDecoration(
                             labelText: 'Port',
                             helperText:
-                                'Use API key "local" in clients that require one.',
+                                'Ports 1024-65535. Changing this rebinds the '
+                                'server immediately.',
                             labelStyle: TextStyle(color: context.textM),
                             helperStyle: TextStyle(
                               color: context.textD,
@@ -481,10 +456,12 @@ class _SettingsBody extends StatelessWidget {
                               return;
                             }
                             try {
-                              await apiServer.setPort(parsed);
+                              final ok = await apiServer.setPort(parsed);
                               Get.snackbar(
-                                'Local API Updated',
-                                'Base URL is ${apiServer.baseUrl}',
+                                ok ? 'Local API Updated' : 'Port Change Failed',
+                                ok
+                                    ? 'Now serving on ${apiServer.baseUrl}'
+                                    : apiServer.errorMessage.value,
                                 snackPosition: SnackPosition.BOTTOM,
                               );
                             } catch (e) {
@@ -496,6 +473,8 @@ class _SettingsBody extends StatelessWidget {
                             }
                           },
                         ),
+                        const SizedBox(height: 16),
+                        _apiKeyBlock(context, apiServer),
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -729,11 +708,15 @@ class _SettingsBody extends StatelessWidget {
   Widget _card(BuildContext context, {required Widget child}) {
     return Container(
       decoration: BoxDecoration(
-        color: context.bgPanel,
         border: Border.all(color: context.border),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: child,
+      child: Material(
+        color: context.bgPanel,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
     );
   }
 
@@ -753,6 +736,103 @@ class _SettingsBody extends StatelessWidget {
           fontWeight: FontWeight.w600,
         ),
       ),
+    );
+  }
+
+  /// API key controls: the token itself, a copy button, regeneration, and the
+  /// switch that turns auth off (locked while the server is exposed to the LAN).
+  Widget _apiKeyBlock(BuildContext context, LocalApiServerService apiServer) {
+    final authOn = apiServer.requireAuth.value;
+    final token = apiServer.apiToken.value;
+    final masked = token.length > 12
+        ? '${token.substring(0, 8)}${'\u2022' * 12}${token.substring(token.length - 4)}'
+        : token;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          title: Text(
+            'Require API Key',
+            style: TextStyle(color: context.text, fontSize: 14),
+          ),
+          subtitle: Text(
+            apiServer.authLocked
+                ? 'Always on while external connections are allowed'
+                : 'Clients must send Authorization: Bearer <key>',
+            style: TextStyle(color: context.textD, fontSize: 12),
+          ),
+          value: authOn,
+          onChanged: apiServer.authLocked
+              ? null
+              : (enabled) {
+                  if (!apiServer.setRequireAuth(enabled)) {
+                    Get.snackbar(
+                      'Cannot Disable',
+                      apiServer.errorMessage.value,
+                      snackPosition: SnackPosition.BOTTOM,
+                    );
+                  }
+                },
+          activeThumbColor: AppColors.accent,
+          contentPadding: EdgeInsets.zero,
+        ),
+        if (authOn) ...[
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: context.bgInput,
+              border: Border.all(color: context.border),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    masked,
+                    style: TextStyle(
+                      color: context.text,
+                      fontSize: 12.5,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copy key',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.copy_rounded, size: 17, color: context.textM),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: token));
+                    Get.snackbar(
+                      'Copied',
+                      'API key copied to clipboard.',
+                      snackPosition: SnackPosition.BOTTOM,
+                    );
+                  },
+                ),
+                IconButton(
+                  tooltip: 'Generate a new key',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    Icons.autorenew_rounded,
+                    size: 17,
+                    color: context.textM,
+                  ),
+                  onPressed: () {
+                    apiServer.regenerateToken();
+                    Get.snackbar(
+                      'New Key Generated',
+                      'Existing clients must be updated with the new key.',
+                      snackPosition: SnackPosition.BOTTOM,
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -1044,3 +1124,74 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   }
 }
 
+/// Global system prompt editor.
+///
+/// Owns its TextEditingController. Building one inside an Obx recreated it on
+/// every keystroke — because onChanged wrote back to the same observable the
+/// Obx watched — which reset the selection and sent the caret to the end of
+/// the text after every character typed.
+class _SystemPromptField extends StatefulWidget {
+  final ChatController chatCtrl;
+
+  const _SystemPromptField({required this.chatCtrl});
+
+  @override
+  State<_SystemPromptField> createState() => _SystemPromptFieldState();
+}
+
+class _SystemPromptFieldState extends State<_SystemPromptField> {
+  late final TextEditingController _controller;
+  late final Worker _worker;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: widget.chatCtrl.systemPrompt.value,
+    );
+    // Reflect changes made elsewhere (the Clear button, switching chats)
+    // without disturbing the caret while the user is typing here.
+    _worker = ever(widget.chatCtrl.systemPrompt, (String value) {
+      if (!mounted || value == _controller.text) return;
+      _controller.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _worker.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      maxLines: 4,
+      style: TextStyle(fontSize: 14, color: context.text, height: 1.5),
+      decoration: InputDecoration(
+        hintText: 'e.g. You are a helpful assistant...',
+        hintStyle: TextStyle(color: context.textD),
+        filled: true,
+        fillColor: context.bgInput,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: context.border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: context.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.accent),
+        ),
+      ),
+      onChanged: widget.chatCtrl.setGlobalSystemPrompt,
+    );
+  }
+}

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:llamadart/llamadart.dart';
 import 'package:path/path.dart' as p;
@@ -21,13 +20,17 @@ class LlmService extends GetxService {
   final lastGenerationTokens = 0.obs;
   final lastGenerationSpeed = 0.0.obs;
 
+  /// Context window of the loaded model, in tokens. Set at load time.
+  final contextTokens = 2048.obs;
+
+  /// How many messages the last request dropped to fit the context window.
+  final lastTrimmedMessages = 0.obs;
+
   // ── Loading progress tracking ──────────────────────────────
   final isLoadingModel = false.obs;
   final loadingProgress = 0.0.obs; // 0.0 to 1.0
   final loadingStatusMsg = ''.obs;
   bool _loadingCancelled = false;
-
-  StreamSubscription? _generateSub;
 
   String get loadedModelFilename {
     final path = loadedModelPath.value;
@@ -151,6 +154,7 @@ class LlmService extends GetxService {
       // Desktop can handle 2048, but Android devices with limited RAM
       // need 1024 to avoid the Low Memory Killer (LMK).
       final contextSize = Platform.isAndroid ? 1024 : 2048;
+      contextTokens.value = contextSize;
 
       // Map the string backend to GpuBackend enum
       final storage = Get.find<ChatStorageService>();
@@ -231,117 +235,110 @@ class LlmService extends GetxService {
     _loadingCancelled = false;
   }
 
-  /// Tokens/patterns the model may emit that should be stripped from output.
-  /// Covers ChatML, Llama, Gemma, Phi, Mistral, and other common formats.
-  static final _stopPatterns = RegExp(
-    r'<\|end\|>'
-    r'|<\|eot_id\|>'
-    r'|<\|endoftext\|>'
-    r'|<\|im_end\|>'
-    r'|<\|im_start\|>'
-    r'|<end_of_turn>'
-    r'|<start_of_turn>'
-    r'|<\|assistant\|>'
-    r'|<\|user\|>'
-    r'|<\|system\|>'
-    r'|<\|pad\|>'
-    r'|</s>'
-    r'|<s>'
-    r'|\[INST\]'
-    r'|\[/INST\]'
-    r'|\[end\]',
-  );
+  /// Rough token estimate used for context budgeting.
+  ///
+  /// Counting exactly would mean a native call per message on every turn;
+  /// 3.6 chars/token is conservative for English across the GGUF tokenizers
+  /// this app ships, and the reserve below absorbs the error.
+  static const _charsPerToken = 3.6;
 
-  /// Pattern that signals the model is hallucinating a new user turn — stop immediately.
-  static final _userTurnPattern = RegExp(
-    r'<\|user\|>|<\|im_start\|>\s*user|<start_of_turn>\s*user|\[INST\]',
-  );
+  static int _estimateTokens(String text) =>
+      (text.length / _charsPerToken).ceil() + 4;
 
-  /// Generate a streaming response.
-  /// [messages] is a list of {role, content} maps.
-  /// [systemPrompt] is prepended as a system message.
-  /// Returns a Stream of String tokens.
+  /// Drop the oldest turns until the conversation fits the context window.
+  ///
+  /// System messages are always kept. [reserveTokens] leaves room for the
+  /// model's own reply, without which llama.cpp truncates the prompt itself
+  /// and the model silently forgets the start of the conversation.
+  List<LlamaChatMessage> trimToContext(
+    List<LlamaChatMessage> messages, {
+    int reserveTokens = 512,
+  }) {
+    final budget = contextTokens.value - reserveTokens;
+    if (budget <= 0) {
+      lastTrimmedMessages.value = 0;
+      return messages;
+    }
+
+    final system = messages
+        .where((m) => m.role == LlamaChatRole.system)
+        .toList(growable: false);
+    final turns = messages
+        .where((m) => m.role != LlamaChatRole.system)
+        .toList();
+
+    var total = messages.fold<int>(
+      0,
+      (sum, m) => sum + _estimateTokens(m.content),
+    );
+
+    var dropped = 0;
+    // Always keep the most recent turn, even if it alone exceeds the budget —
+    // llama.cpp will truncate it, but sending nothing is worse.
+    while (total > budget && turns.length > 1) {
+      total -= _estimateTokens(turns.removeAt(0).content);
+      dropped++;
+    }
+
+    lastTrimmedMessages.value = dropped;
+    if (dropped == 0) return messages;
+    return [...system, ...turns];
+  }
+
+  static LlamaChatRole _roleFromString(String? role) {
+    switch (role) {
+      case 'system':
+      case 'developer':
+        return LlamaChatRole.system;
+      case 'assistant':
+        return LlamaChatRole.assistant;
+      case 'tool':
+        return LlamaChatRole.tool;
+      default:
+        return LlamaChatRole.user;
+    }
+  }
+
+  /// Generate a streaming response for the in-app chat.
+  ///
+  /// Delegates to [generateChatCompletion] so the model's own chat template is
+  /// applied. Hand-building a prompt here previously emitted a fixed
+  /// pseudo-ChatML format to every model regardless of what it expected, which
+  /// degraded output on Gemma, Llama 3 and Mistral alike.
   Stream<String> generate({
     required List<Map<String, String>> messages,
     String? systemPrompt,
     double temperature = 0.7,
-  }) async* {
-    if (_engine == null || !isLoaded.value) {
-      throw StateError('No model loaded. Call loadModel() first.');
+  }) {
+    final chatMessages = <LlamaChatMessage>[];
+
+    if (systemPrompt != null && systemPrompt.isNotEmpty) {
+      chatMessages.add(
+        LlamaChatMessage.fromText(
+          role: LlamaChatRole.system,
+          text: systemPrompt,
+        ),
+      );
     }
-    if (isGenerating.value) {
-      throw StateError('Another generation is already in progress.');
+
+    for (final message in messages) {
+      chatMessages.add(
+        LlamaChatMessage.fromText(
+          role: _roleFromString(message['role']),
+          text: message['content'] ?? '',
+        ),
+      );
     }
 
-    isGenerating.value = true;
-    tokensPerSecond.value = 0.0;
-    final stopwatch = Stopwatch()..start();
-    int tokenCount = 0;
-
-    // Buffer to detect multi-token stop sequences
-    String buffer = '';
-
-    try {
-      // Build the full prompt from messages
-      final prompt = _buildPrompt(messages, systemPrompt);
-
-      await for (final token in _engine!.generate(prompt)) {
-        tokenCount++;
-        if (stopwatch.elapsedMilliseconds > 0) {
-          tokensPerSecond.value =
-              tokenCount / (stopwatch.elapsedMilliseconds / 1000);
-        }
-
-        // Accumulate into buffer for stop-pattern detection
-        buffer += token;
-
-        // Check if model is hallucinating a user turn — stop immediately
-        if (_userTurnPattern.hasMatch(buffer)) {
-          final cleaned = buffer
-              .replaceAll(_stopPatterns, '')
-              .replaceAll(_userTurnPattern, '')
-              .trim();
-          if (cleaned.isNotEmpty) {
-            yield cleaned;
-          }
-          break;
-        }
-
-        // Check if buffer contains any stop pattern
-        if (_stopPatterns.hasMatch(buffer)) {
-          // Yield everything before the stop pattern, then stop
-          final cleaned = buffer.replaceAll(_stopPatterns, '').trim();
-          if (cleaned.isNotEmpty) {
-            yield cleaned;
-          }
-          break;
-        }
-
-        // If buffer is getting long enough that we know it's safe, flush it
-        // Keep last 30 chars to detect split stop sequences
-        if (buffer.length > 40) {
-          final safe = buffer.substring(0, buffer.length - 30);
-          buffer = buffer.substring(buffer.length - 30);
-          yield safe;
-        }
-      }
-
-      // Flush any remaining buffer (cleaning all control patterns)
-      if (buffer.isNotEmpty) {
-        final cleaned = buffer
-            .replaceAll(_stopPatterns, '')
-            .replaceAll(_userTurnPattern, '')
-            .trim();
-        if (cleaned.isNotEmpty) {
-          yield cleaned;
-        }
-      }
-    } finally {
-      stopwatch.stop();
-      lastGenerationTokens.value = tokenCount;
-      lastGenerationSpeed.value = tokensPerSecond.value;
-      isGenerating.value = false;
-    }
+    return generateChatCompletion(
+      messages: trimToContext(chatMessages),
+      params: GenerationParams(
+        temp: temperature,
+        penalty: 1.0,
+        topP: 0.95,
+        minP: 0.05,
+      ),
+    );
   }
 
   /// Generate a chat completion using llamadart's chat-template API.
@@ -397,8 +394,6 @@ class LlmService extends GetxService {
 
   /// Stop ongoing generation.
   Future<void> stopGeneration() async {
-    _generateSub?.cancel();
-    _generateSub = null;
     _engine?.cancelGeneration();
     isGenerating.value = false;
   }
@@ -427,33 +422,8 @@ class LlmService extends GetxService {
     // Disable wake lock when model is unloaded
     try {
       final wakelockService = Get.find<WakelockService>();
-      await wakelockService.disable();
+      await wakelockService.releaseModel();
     } catch (_) {}
-  }
-
-  /// Build a single prompt string from chat messages.
-  String _buildPrompt(
-    List<Map<String, String>> messages,
-    String? systemPrompt,
-  ) {
-    final buffer = StringBuffer();
-
-    if (systemPrompt != null && systemPrompt.isNotEmpty) {
-      buffer.writeln('<|system|>');
-      buffer.writeln(systemPrompt);
-      buffer.writeln('<|end|>');
-    }
-
-    for (final msg in messages) {
-      final role = msg['role'] ?? 'user';
-      final content = msg['content'] ?? '';
-      buffer.writeln('<|$role|>');
-      buffer.writeln(content);
-      buffer.writeln('<|end|>');
-    }
-
-    buffer.writeln('<|assistant|>');
-    return buffer.toString();
   }
 
   @override

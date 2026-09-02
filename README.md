@@ -98,16 +98,48 @@ flutter build ios --release
 # Open ios/Runner.xcworkspace in Xcode and archive to deploy
 ```
 
-### Desktop — Windows / macOS / Linux (Community Supported)
+### Loading a model on iOS
 
-> Desktop builds compile successfully but may have rough edges. **We are actively looking for contributors** to help test and polish the desktop experience.
+Downloading several GB inside the app is slow. You can copy a `.gguf` straight
+in instead: open the **Files** app, navigate to **On My iPhone → Uncensored
+Local AI**, and drop the model there. The app adopts it into its model library
+on next launch.
+
+### Desktop — Windows / macOS / Linux
 
 ```bash
 git clone https://github.com/techjarves/Uncensored-Local-AI-Multiplatform.git
 cd Uncensored-Local-AI-Multiplatform
 flutter pub get
-flutter run -d windows   # or macos / linux
+flutter run -d linux   # or windows / macos
 ```
+
+**Linux build dependencies** (Debian/Ubuntu):
+
+```bash
+sudo apt-get install -y clang cmake ninja-build pkg-config \
+  libgtk-3-dev liblzma-dev libstdc++-12-dev
+```
+
+#### Packaging
+
+Ready-to-run build scripts live in [`packaging/`](packaging/README.md):
+
+| Platform | Command | Output |
+|----------|---------|--------|
+| Linux | `./packaging/linux/build-appimage.sh` | Single-file `.AppImage` |
+| Windows | `.\packaging\windows\build-installer.ps1` | Inno Setup `.exe` + portable `.zip` |
+| macOS | `./packaging/macos/build-and-notarize.sh --notarize` | Signed, notarized, stapled `.zip` / `.dmg` |
+
+| Platform | Status |
+|----------|--------|
+| **Linux x64** | Builds, runs, and packages to AppImage — verified on Flutter 3.47.2 |
+| **Windows** | Builds; installer script provided. Needs testing on real hardware |
+| **macOS** | Builds; sign/notarize script provided. Needs testing on real hardware |
+
+> **Web is not supported.** The project compiles for web, but the app needs a
+> local filesystem, a native llama.cpp backend and a real HTTP server — none of
+> which exist in a browser tab. Don't ship `build/web`.
 
 If you encounter issues on desktop, please [open an issue](https://github.com/techjarves/Uncensored-Local-AI-Multiplatform/issues) — your feedback directly shapes the roadmap.
 
@@ -132,26 +164,49 @@ If you encounter issues on desktop, please [open an issue](https://github.com/te
 
 1. Load a model in the app
 2. Go to **Settings → Local API Server** and toggle it **ON**
-3. Use `http://127.0.0.1:4891/v1` as your base URL
+3. Copy your **API key** from the same screen (tap the copy icon)
+4. Use `http://127.0.0.1:4891/v1` as your base URL
+
+### Authentication
+
+The server requires a bearer token. Each install generates its own key, shown in
+**Settings → Local API Server** and on the **Sample Endpoints & Testing** screen.
+
+```bash
+export ULA_KEY="ula-..."   # copy it from Settings
+```
+
+Clients that cannot set headers may pass `?api_key=<key>` on the URL instead.
+
+You can turn authentication off for loopback-only use, but it stays locked on
+whenever **Allow External Connections** is enabled — otherwise anyone on your
+network could drive your model.
 
 ### Endpoints
 
 ```bash
+# Liveness — no key required
+curl http://127.0.0.1:4891/healthz
+
 # List loaded models
-curl http://127.0.0.1:4891/v1/models
+curl http://127.0.0.1:4891/v1/models \
+  -H "Authorization: Bearer $ULA_KEY"
 
 # Chat completion (non-streaming)
 curl http://127.0.0.1:4891/v1/chat/completions \
+  -H "Authorization: Bearer $ULA_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"local","messages":[{"role":"user","content":"Tell me something true that no one wants to hear."}]}'
 
 # Chat completion (streaming)
 curl -N http://127.0.0.1:4891/v1/chat/completions \
+  -H "Authorization: Bearer $ULA_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"local","stream":true,"messages":[{"role":"user","content":"Write a brutally honest analysis of social media."}]}'
 ```
 
-> **API Key:** Use `local` for any client that requires a non-empty key value.
+> **Upgrading from v2.0.0?** The old placeholder key `local` was never actually
+> validated and is now rejected. Copy the real key from Settings.
 
 ---
 
@@ -179,9 +234,9 @@ All contributions are welcome — and we especially need help from the community
 
 | Area | What's Needed |
 |------|---------------|
-| **Windows** | Testing, packaging, installer script |
-| **macOS** | Testing, App Store prep, notarization |
-| **Linux** | Testing on distros, AppImage build |
+| **Windows** | Testing on real hardware, code signing (installer script now in [`packaging/`](packaging/README.md)) |
+| **macOS** | Testing on real hardware, App Store prep (sign/notarize script now in [`packaging/`](packaging/README.md)) |
+| **Linux** | Testing on more distros (AppImage build now in [`packaging/`](packaging/README.md)) |
 | **General** | Bug reports, feature ideas, UI improvements |
 
 If you own a desktop device and can test the app — **please do!** Even a simple "works" or "crashes on X" issue report is incredibly valuable.

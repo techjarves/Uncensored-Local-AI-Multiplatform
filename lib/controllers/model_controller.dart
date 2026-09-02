@@ -236,26 +236,40 @@ class ModelController extends GetxController {
   Future<bool> _confirmLargeModel(double sizeGb) async {
     if (sizeGb < 3.5) return true; // Safe size for most devices
 
-    final completer = Completer<bool>();
-    Get.defaultDialog(
-      title: 'Large Model Warning',
-      titlePadding: const EdgeInsets.only(top: 20, left: 20, right: 20),
-      contentPadding: const EdgeInsets.all(20),
-      middleText: 'This model is ${sizeGb.toStringAsFixed(1)} GB.\n\nDevices with less than 8GB of RAM may crash or run out of storage while processing this model.\n\nAre you sure you want to proceed?',
-      textConfirm: 'Proceed',
-      textCancel: 'Cancel',
-      confirmTextColor: Colors.white,
-      buttonColor: Colors.orange,
-      cancelTextColor: Colors.orange,
-      onConfirm: () {
-        Get.back();
-        completer.complete(true);
-      },
-      onCancel: () {
-        completer.complete(false);
-      },
+    // Get.dialog resolves to null when dismissed by tapping the barrier or
+    // pressing back. The previous Completer-based version completed only from
+    // the two buttons, so a barrier dismiss left the await hanging forever and
+    // the loading state stuck on.
+    final confirmed = await Get.dialog<bool>(
+      AlertDialog(
+        title: const Text('Large Model Warning'),
+        content: Text(
+          'This model is ${sizeGb.toStringAsFixed(1)} GB.\n\n'
+          'Devices with less than 8GB of RAM may crash or run out of storage '
+          'while processing this model.\n\n'
+          'Are you sure you want to proceed?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.orange),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Get.back(result: true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text(
+              'Proceed',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
     );
-    return completer.future;
+
+    return confirmed ?? false;
   }
 
   /// Import a .gguf file via file picker.
@@ -456,6 +470,14 @@ class ModelController extends GetxController {
     }
   }
 
+  @override
+  void onClose() {
+    // The caching-pulse timer would otherwise outlive the controller and keep
+    // writing to disposed observables.
+    _stopCachingPulse();
+    super.onClose();
+  }
+
   /// Add a custom model from a URL.
   /// Does a HEAD request first to fetch file size.
   Future<void> addCustomUrlModel({required String name, required String url}) async {
@@ -473,6 +495,8 @@ class ModelController extends GetxController {
       final request = await client.headUrl(uri);
       final response = await request.close();
       final contentLength = response.contentLength;
+      // Drain before closing, or the socket is held until timeout.
+      await response.drain<void>();
       client.close();
       if (contentLength > 0) {
         sizeGb = double.parse((contentLength / (1024 * 1024 * 1024)).toStringAsFixed(2));
@@ -504,7 +528,7 @@ class ModelController extends GetxController {
 
     _manager.addCustomModel(model);
 
-    final sizeStr = sizeGb > 0 ? ' (${sizeGb} GB)' : '';
+    final sizeStr = sizeGb > 0 ? ' ($sizeGb GB)' : '';
     Get.snackbar('Model Added', '$name$sizeStr added to your library!',
         snackPosition: SnackPosition.BOTTOM);
   }

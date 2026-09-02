@@ -1,3 +1,5 @@
+import 'package:http/http.dart' as http;
+
 /// Tracks real-time download state for a single model.
 class DownloadState {
   final String filename;
@@ -7,6 +9,13 @@ class DownloadState {
   DateTime startedAt;
   bool isActive;
   bool isCancelled;
+
+  /// True while the finished file is being hashed for verification.
+  bool isVerifying = false;
+
+  /// The HTTP client for this transfer, so cancelling one download does not
+  /// tear down the connections of any others.
+  http.Client? client;
 
   DownloadState({
     required this.filename,
