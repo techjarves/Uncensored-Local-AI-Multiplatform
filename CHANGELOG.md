@@ -53,8 +53,31 @@ and model downloading, plus desktop packaging for all three platforms.
   release build granted only `app-sandbox`, so it could not download models
   (no `network.client`), could not start the API server (no `network.server`),
   and could not import a `.gguf` (no user-selected file access).
-- The wakelock is no longer released while a model is still loaded or
-  generating.
+- **The wake lock was torn down by whichever subsystem finished first.**
+  Downloads, a loaded model and the API server each acquired it, but any one
+  of them calling `disable()` stopped the foreground service the others were
+  relying on — so a completed download killed the service keeping inference
+  alive. Holders are now reference-counted.
+- **Background services came up after the API server that depends on them.**
+  The server acquires a wake lock the moment it binds, and starting a
+  foreground service before `FlutterForegroundTask.init()` silently fails on
+  Android.
+- **A failed startup left the app stuck on the splash screen** with a bare
+  error string and no way forward. Adds Retry and Continue anyway.
+- **The large-model confirmation dialog hung forever if dismissed** by tapping
+  outside or pressing back — its `Completer` only completed from the two
+  buttons, leaving the load stuck in its loading state.
+- **The system prompt field reset the caret on every keystroke.** Its
+  controller was built inside an `Obx` watching the observable its own
+  `onChanged` wrote to, so it was recreated per character — and leaked.
+- **iOS could not side-load models at all.** `UIFileSharingEnabled` and
+  `LSSupportsOpeningDocumentsInPlace` were missing, and even with them a file
+  dropped into Documents landed outside the models directory. The app now
+  adopts `.gguf` files placed there.
+- **iOS was missing `NSLocalNetworkUsageDescription`**, required since iOS 14
+  to serve the API to other devices on the network.
+- Leaked controllers in the Add-from-URL dialog, an uncancelled caching-pulse
+  timer, and an undrained HEAD response holding its socket open.
 
 ### Added
 
@@ -69,10 +92,10 @@ and model downloading, plus desktop packaging for all three platforms.
   portable zip, and a macOS sign/notarize/staple script.
 - **CI** that gates on `flutter analyze` and `flutter test`, and builds Linux,
   Windows and macOS.
-- **A real test suite**: 50 tests covering API rebinding, authentication,
+- **A real test suite**: 60 tests covering API rebinding, authentication,
   request validation, routing, download integrity, resume behaviour, context
-  trimming, and the chat widgets. The previous suite was 3 happy-path API tests
-  plus a stub asserting `true`.
+  trimming, wake lock reference counting, and the chat widgets. The previous
+  suite was 3 happy-path API tests plus a stub asserting `true`.
 
 ### Changed
 
@@ -84,6 +107,9 @@ and model downloading, plus desktop packaging for all three platforms.
 - Version aligned with the README: `pubspec.yaml` said `1.1.0+2` while the
   project shipped as v2.0.0.
 - Removed a stray `test.cpp` from the repository root.
+- Chats are now looked up by key rather than scanning every stored value.
+- Documented that web is not a supported target: it compiles, but the app
+  needs a local filesystem, a native llama.cpp backend and a real HTTP server.
 
 ### Breaking
 

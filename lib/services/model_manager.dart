@@ -90,8 +90,47 @@ class ModelManager extends GetxService {
     } catch (_) {}
   }
 
+  /// Adopt models the user dropped into the app's Documents folder.
+  ///
+  /// On iOS, UIFileSharingEnabled lets people copy a .gguf in through the
+  /// Files app, but it lands in the Documents root rather than our models
+  /// directory. Without this the file would be invisible to the app. Desktop
+  /// users dropping a model into the same folder get the same convenience.
+  Future<void> _adoptExternalModels() async {
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      if (p.equals(docsDir.path, _modelsDir)) return;
+      if (!await docsDir.exists()) return;
+
+      await for (final entry in docsDir.list()) {
+        if (entry is! File || !entry.path.endsWith('.gguf')) continue;
+
+        final filename = p.basename(entry.path);
+        final destPath = p.join(_modelsDir, filename);
+        if (await File(destPath).exists()) continue;
+
+        try {
+          // Same volume, so this is a rename rather than a multi-GB copy.
+          await entry.rename(destPath);
+        } catch (_) {
+          // Different volume — fall back to copying, then remove the original.
+          try {
+            await entry.copy(destPath);
+            await entry.delete();
+          } catch (_) {
+            continue;
+          }
+        }
+      }
+    } catch (_) {
+      // Never let model adoption block startup.
+    }
+  }
+
   /// Scan the models directory for downloaded .gguf files.
   Future<void> scanDownloaded() async {
+    await _adoptExternalModels();
+
     final dir = Directory(_modelsDir);
     if (!await dir.exists()) return;
 

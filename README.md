@@ -98,6 +98,13 @@ flutter build ios --release
 # Open ios/Runner.xcworkspace in Xcode and archive to deploy
 ```
 
+### Loading a model on iOS
+
+Downloading several GB inside the app is slow. You can copy a `.gguf` straight
+in instead: open the **Files** app, navigate to **On My iPhone → Uncensored
+Local AI**, and drop the model there. The app adopts it into its model library
+on next launch.
+
 ### Desktop — Windows / macOS / Linux
 
 ```bash
@@ -129,6 +136,10 @@ Ready-to-run build scripts live in [`packaging/`](packaging/README.md):
 | **Linux x64** | Builds, runs, and packages to AppImage — verified on Flutter 3.47.2 |
 | **Windows** | Builds; installer script provided. Needs testing on real hardware |
 | **macOS** | Builds; sign/notarize script provided. Needs testing on real hardware |
+
+> **Web is not supported.** The project compiles for web, but the app needs a
+> local filesystem, a native llama.cpp backend and a real HTTP server — none of
+> which exist in a browser tab. Don't ship `build/web`.
 
 If you encounter issues on desktop, please [open an issue](https://github.com/techjarves/Uncensored-Local-AI-Multiplatform/issues) — your feedback directly shapes the roadmap.
 
