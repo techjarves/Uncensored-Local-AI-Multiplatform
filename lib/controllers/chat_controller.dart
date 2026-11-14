@@ -17,6 +17,9 @@ class ChatController extends GetxController {
   final temperature = 0.7.obs;
   final systemPrompt = ''.obs;
 
+  /// Messages dropped from the last request to fit the model's context window.
+  RxInt get trimmedMessages => _llm.lastTrimmedMessages;
+
   StreamSubscription<String>? _genSub;
 
   @override
@@ -103,6 +106,13 @@ class ChatController extends GetxController {
     chat.messages.add(aiMsg);
     chats.refresh();
 
+    // Tokens arrive faster than the UI can usefully repaint, and the whole
+    // message list sits under a single Obx — so coalesce repaints instead of
+    // rebuilding every bubble and every sidebar row per token.
+    final buffer = StringBuffer();
+    var lastPaint = DateTime.fromMillisecondsSinceEpoch(0);
+    const paintInterval = Duration(milliseconds: 66);
+
     try {
       final stream = _llm.generate(
         messages: history,
@@ -113,24 +123,22 @@ class ChatController extends GetxController {
       );
 
       await for (final token in stream) {
-        streamedResponse.value += token;
-        aiMsg.content = streamedResponse.value;
-        // Throttle UI refreshes
-        chats.refresh();
+        buffer.write(token);
+        aiMsg.content = buffer.toString();
+
+        final now = DateTime.now();
+        if (now.difference(lastPaint) >= paintInterval) {
+          lastPaint = now;
+          streamedResponse.value = aiMsg.content;
+          chats.refresh();
+        }
       }
     } catch (e) {
-      if (aiMsg.content.isEmpty) {
+      if (buffer.isEmpty) {
         aiMsg.content = '⚠ Error: ${e.toString()}';
       }
     } finally {
-      // Clean up any trailing stop tokens or whitespace
-      aiMsg.content = aiMsg.content
-          .replaceAll(RegExp(
-            r'<\|end\|>|<\|eot_id\|>|<\|endoftext\|>|<\|im_end\|>|<\|im_start\|>'
-            r'|<end_of_turn>|<start_of_turn>|<\|assistant\|>|<\|user\|>|<\|system\|>'
-            r'|<\|pad\|>|</s>|<s>|\[INST\]|\[/INST\]|\[end\]'
-          ), '')
-          .trim();
+      aiMsg.content = aiMsg.content.trim();
       isGenerating.value = false;
       streamedResponse.value = '';
       chat.updatedAt = DateTime.now();

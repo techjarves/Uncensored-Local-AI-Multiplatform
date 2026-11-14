@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:get/get.dart';
 import 'package:hive/hive.dart';
 
@@ -22,13 +24,7 @@ class ChatStorageService extends GetxService {
     return chats;
   }
 
-  ChatModel? getChat(String id) {
-    try {
-      return _chatsBox.values.firstWhere((c) => c.id == id);
-    } catch (_) {
-      return null;
-    }
-  }
+  ChatModel? getChat(String id) => _chatsBox.get(id);
 
   Future<void> saveChat(ChatModel chat) async {
     chat.updatedAt = DateTime.now();
@@ -95,6 +91,38 @@ class ChatStorageService extends GetxService {
 
   set localApiAllInterfaces(bool value) =>
       _settingsBox.put('local_api_all_interfaces', value);
+
+  /// Bearer token for the local API server.
+  ///
+  /// Generated lazily on first read and persisted, so a fresh install always
+  /// has a secret even if the user never opens the API settings.
+  String get localApiToken {
+    final stored = _settingsBox.get('local_api_token') as String?;
+    if (stored != null && stored.isNotEmpty) return stored;
+    final generated = newApiToken();
+    _settingsBox.put('local_api_token', generated);
+    return generated;
+  }
+
+  set localApiToken(String value) => _settingsBox.put('local_api_token', value);
+
+  bool get localApiRequireAuth =>
+      _settingsBox.get('local_api_require_auth', defaultValue: true) as bool;
+
+  set localApiRequireAuth(bool value) =>
+      _settingsBox.put('local_api_require_auth', value);
+
+  /// Cryptographically-random token in the form `ula-<32 chars>`.
+  static String newApiToken() {
+    final rng = Random.secure();
+    const alphabet =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    final buffer = StringBuffer('ula-');
+    for (var i = 0; i < 32; i++) {
+      buffer.write(alphabet[rng.nextInt(alphabet.length)]);
+    }
+    return buffer.toString();
+  }
 
   // ── Hardware Settings ──────────────────────────────────────
 

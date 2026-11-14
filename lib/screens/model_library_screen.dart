@@ -122,7 +122,6 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 filtered = allCatalog.where((m) => m.isCustom).toList();
                 break;
               case _Filter.all:
-              default:
                 filtered = allCatalog;
             }
 
@@ -522,22 +521,25 @@ class _ImportButton extends StatelessWidget {
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return ListTile(
-      leading: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.15),
-          borderRadius: BorderRadius.circular(10),
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: color, size: 20),
         ),
-        child: Icon(icon, color: color, size: 20),
+        title: Text(title, style: TextStyle(color: context.text, fontSize: 15)),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(color: context.textD, fontSize: 12),
+        ),
+        onTap: onTap,
       ),
-      title: Text(title, style: TextStyle(color: context.text, fontSize: 15)),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(color: context.textD, fontSize: 12),
-      ),
-      onTap: onTap,
     );
   }
 
@@ -545,6 +547,7 @@ class _ImportButton extends StatelessWidget {
     final nameCtrl = TextEditingController();
     final urlCtrl = TextEditingController();
 
+    // Dispose once the dialog is gone, however it was dismissed.
     Get.dialog(
       AlertDialog(
         backgroundColor: context.bgPanel,
@@ -563,7 +566,7 @@ class _ImportButton extends StatelessWidget {
                 labelText: 'Model Name',
                 labelStyle: TextStyle(color: context.textD, fontSize: 13),
                 hintText: 'e.g. Mistral 7B Uncensored',
-                hintStyle: TextStyle(color: context.textD.withOpacity(0.5)),
+                hintStyle: TextStyle(color: context.textD.withValues(alpha: 0.5)),
                 filled: true,
                 fillColor: context.bgInput,
                 border: OutlineInputBorder(
@@ -589,7 +592,7 @@ class _ImportButton extends StatelessWidget {
                 labelText: 'Download URL',
                 labelStyle: TextStyle(color: context.textD, fontSize: 13),
                 hintText: 'https://huggingface.co/.../model.gguf',
-                hintStyle: TextStyle(color: context.textD.withOpacity(0.5)),
+                hintStyle: TextStyle(color: context.textD.withValues(alpha: 0.5)),
                 filled: true,
                 fillColor: context.bgInput,
                 border: OutlineInputBorder(
@@ -650,6 +653,9 @@ class _ImportButton extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ).whenComplete(() {
+      nameCtrl.dispose();
+      urlCtrl.dispose();
+    });
   }
 }

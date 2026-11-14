@@ -11,6 +11,10 @@ class AiModelInfo {
   final String systemPrompt;
   final bool recommended;
 
+  /// Lowercase hex SHA-256 of the GGUF, when the catalog publishes one.
+  /// Empty means the download cannot be integrity-checked.
+  final String sha256;
+
   const AiModelInfo({
     required this.id,
     required this.name,
@@ -22,6 +26,7 @@ class AiModelInfo {
     required this.badge,
     required this.systemPrompt,
     this.recommended = false,
+    this.sha256 = '',
   });
 
   factory AiModelInfo.fromJson(Map<String, dynamic> json) {
@@ -36,6 +41,7 @@ class AiModelInfo {
       badge: json['badge'] as String? ?? '',
       systemPrompt: json['systemPrompt'] as String? ?? '',
       recommended: json['recommended'] as bool? ?? false,
+      sha256: (json['sha256'] as String? ?? '').toLowerCase(),
     );
   }
 
@@ -50,7 +56,10 @@ class AiModelInfo {
         'badge': badge,
         'systemPrompt': systemPrompt,
         'recommended': recommended,
+        'sha256': sha256,
       };
+
+  bool get hasChecksum => sha256.isNotEmpty;
 
   bool get isUncensored => label == 'UNCENSORED';
   bool get isStandard => label == 'STANDARD';

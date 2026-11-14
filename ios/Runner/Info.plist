@@ -26,6 +26,21 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Let users drop .gguf models into the app through the Files app.
+	     Downloading a multi-GB model in-app is painful on iOS, and without
+	     these two keys there is no way to side-load one at all. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<!-- Required since iOS 14 to serve the local API to other devices
+	     ("Allow External Connections" in Settings). -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Uncensored Local AI serves its OpenAI-compatible API to other devices on your network when you enable external connections. Nothing is sent to the internet.</string>
+	<!-- The app ships no non-exempt encryption; declaring this up front skips
+	     the export-compliance prompt on every TestFlight upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

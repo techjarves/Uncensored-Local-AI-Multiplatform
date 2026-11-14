@@ -358,7 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
           onDestinationSelected: (i) => setState(() => _mobileTabIndex = i),
           backgroundColor: Colors.transparent,
           elevation: 0,
-          indicatorColor: AppColors.accent.withOpacity(0.15),
+          indicatorColor: AppColors.accent.withValues(alpha: 0.15),
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           height: 64,
           destinations: [
@@ -651,76 +651,79 @@ class _HomeScreenState extends State<HomeScreen> {
                     _llm.isLoaded.value;
                 final isLoading =
                     _modelCtrl.loadingModelFilename.value == filename;
-                return ListTile(
-                  dense: true,
-                  leading: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: isActive
-                          ? AppColors.green.withOpacity(0.15)
-                          : isLoading
-                          ? AppColors.orange.withOpacity(0.15)
-                          : context.bgHover,
-                      borderRadius: BorderRadius.circular(8),
+                return Material(
+                  color: Colors.transparent,
+                  child: ListTile(
+                    dense: true,
+                    leading: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: isActive
+                            ? AppColors.green.withValues(alpha: 0.15)
+                            : isLoading
+                            ? AppColors.orange.withValues(alpha: 0.15)
+                            : context.bgHover,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: isLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.orange,
+                              ),
+                            )
+                          : Icon(
+                              isActive
+                                  ? Icons.check_rounded
+                                  : Icons.smart_toy_outlined,
+                              size: 16,
+                              color: isActive ? AppColors.green : context.textM,
+                            ),
                     ),
-                    child: isLoading
-                        ? const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.orange,
+                    title: Text(
+                      info?.name ?? filename,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                        color: context.text,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: info != null
+                        ? Text(
+                            '${info.sizeGb} GB • Min ${info.minRamGb} GB RAM',
+                            style: TextStyle(fontSize: 11, color: context.textD),
+                          )
+                        : null,
+                    trailing: isActive
+                        ? const Text(
+                            'Active',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.green,
+                              fontWeight: FontWeight.w600,
                             ),
                           )
-                        : Icon(
-                            isActive
-                                ? Icons.check_rounded
-                                : Icons.smart_toy_outlined,
-                            size: 16,
-                            color: isActive ? AppColors.green : context.textM,
-                          ),
+                        : isLoading
+                        ? const Text(
+                            'Loading...',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.orange,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          )
+                        : null,
+                    onTap: () {
+                      Navigator.pop(context);
+                      if (!isActive && !isLoading) {
+                        _modelCtrl.loadModel(filename);
+                      }
+                    },
                   ),
-                  title: Text(
-                    info?.name ?? filename,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                      color: context.text,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: info != null
-                      ? Text(
-                          '${info.sizeGb} GB • Min ${info.minRamGb} GB RAM',
-                          style: TextStyle(fontSize: 11, color: context.textD),
-                        )
-                      : null,
-                  trailing: isActive
-                      ? const Text(
-                          'Active',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.green,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      : isLoading
-                      ? const Text(
-                          'Loading...',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.orange,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      : null,
-                  onTap: () {
-                    Navigator.pop(context);
-                    if (!isActive && !isLoading) {
-                      _modelCtrl.loadModel(filename);
-                    }
-                  },
                 );
               }),
               const SizedBox(height: 8),
@@ -818,7 +821,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: context.bgHover.withOpacity(0.5),
+                  color: context.bgHover.withValues(alpha: 0.5),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1048,7 +1051,7 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(context.isDark ? 0.15 : 0.04),
+              color: Colors.black.withValues(alpha: context.isDark ? 0.15 : 0.04),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),

@@ -21,6 +21,7 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   String _status = 'Initializing...';
+  String _error = '';
 
   @override
   void initState() {
@@ -28,32 +29,43 @@ class _SplashScreenState extends State<SplashScreen> {
     _initApp();
   }
 
+  /// setState after an await is only safe while the widget is still mounted.
+  void _setStatus(String status) {
+    if (!mounted) return;
+    setState(() => _status = status);
+  }
+
   Future<void> _initApp() async {
+    if (mounted) setState(() => _error = '');
     try {
       // Initialize logging first
       final log = Get.find<LogService>()..init();
 
-      setState(() => _status = 'Setting up storage...');
+      _setStatus('Setting up storage...');
       log.info('Initializing storage...', source: 'Splash');
       await Get.find<ChatStorageService>().init();
 
-      setState(() => _status = 'Loading model catalog...');
+      _setStatus('Loading model catalog...');
       log.info('Loading model catalog...', source: 'Splash');
       await Get.find<ModelManager>().init();
 
-      setState(() => _status = 'Preparing AI engine...');
+      _setStatus('Preparing AI engine...');
       log.info('Preparing AI engine...', source: 'Splash');
       await Get.find<LlmService>().init();
 
-      setState(() => _status = 'Preparing local API...');
-      log.info('Preparing local API...', source: 'Splash');
-      await Get.find<LocalApiServerService>().init();
-
-      setState(() => _status = 'Setting up background services...');
+      // Background services must come up before the API server, which
+      // acquires a wake lock as soon as it binds. Starting the foreground
+      // service before FlutterForegroundTask.init() has run silently fails
+      // on Android.
+      _setStatus('Setting up background services...');
       log.info('Setting up background services...', source: 'Splash');
       await Get.find<WakelockService>().init();
 
-      setState(() => _status = 'Ready!');
+      _setStatus('Preparing local API...');
+      log.info('Preparing local API...', source: 'Splash');
+      await Get.find<LocalApiServerService>().init();
+
+      _setStatus('Ready!');
       log.info('All services initialized successfully', source: 'Splash');
       await Future.delayed(const Duration(milliseconds: 500));
 
@@ -64,7 +76,14 @@ class _SplashScreenState extends State<SplashScreen> {
 
       Get.offAllNamed(AppRoutes.home);
     } catch (e) {
-      setState(() => _status = 'Error: $e');
+      // Startup used to stop here with a bare error string and no way out,
+      // which left anyone with a corrupt box permanently stuck on the splash.
+      if (mounted) {
+        setState(() {
+          _status = 'Startup failed';
+          _error = e.toString();
+        });
+      }
       try {
         Get.find<LogService>().error('Init failed: $e', source: 'Splash');
       } catch (_) {}
@@ -132,6 +151,63 @@ class _SplashScreenState extends State<SplashScreen> {
               _status,
               style: TextStyle(fontSize: 12, color: context.textD),
             ).animate().fadeIn(delay: 600.ms),
+            if (_error.isNotEmpty) _buildErrorActions(context),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Shown when startup fails, so the user can retry or push past a service
+  /// that will not come up rather than being stuck on the splash forever.
+  Widget _buildErrorActions(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.red.withValues(alpha: 0.08),
+                border: Border.all(color: AppColors.red.withValues(alpha: 0.3)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _error,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11.5, color: context.textM),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                FilledButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _status = 'Retrying...';
+                      _error = '';
+                    });
+                    _initApp();
+                  },
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Retry'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                TextButton(
+                  onPressed: () => Get.offAllNamed(AppRoutes.home),
+                  child: Text(
+                    'Continue anyway',
+                    style: TextStyle(color: context.textM),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
